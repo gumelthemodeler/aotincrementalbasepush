@@ -72,7 +72,8 @@ local function EndMatch(matchId, winnerUserId)
 	if p1 and p1.UserId == winnerUserId then winner = p1; loser = p2
 	elseif p2 and p2.UserId == winnerUserId then winner = p2; loser = p1 end
 
-	if winner and loser then
+	if winnerUserId ~= "Draw" and winner and loser then
+		-- Update Elo and Rewards
 		local wElo = winner:FindFirstChild("leaderstats") and winner.leaderstats:FindFirstChild("Elo")
 		local lElo = loser:FindFirstChild("leaderstats") and loser.leaderstats:FindFirstChild("Elo")
 
@@ -85,15 +86,37 @@ local function EndMatch(matchId, winnerUserId)
 		winner:SetAttribute("XP", (winner:GetAttribute("XP") or 0) + 1500)
 		Network.NotificationEvent:FireClient(winner, "Victory! +25 Elo, +2500 Dews", "Success")
 		Network.NotificationEvent:FireClient(loser, "Defeat. -15 Elo", "Error")
-	end
 
-	local winningBets = match.Bets[winnerUserId]
-	for _, betData in pairs(winningBets) do
-		local spectator = betData.Spectator
-		if spectator and spectator.Parent then
-			local payout = betData.Amount * 2
-			spectator.leaderstats.Dews.Value += payout
-			Network.NotificationEvent:FireClient(spectator, "You won " .. payout .. " Dews from your wager!", "Success")
+		-- [[ FIX: Pot Distribution System for Betting ]]
+		local winnerPot = 0
+		local loserPot = 0
+		for _, b in pairs(match.Bets[winner.UserId] or {}) do winnerPot += b.Amount end
+		for _, b in pairs(match.Bets[loser.UserId] or {}) do loserPot += b.Amount end
+
+		local winningBets = match.Bets[winner.UserId] or {}
+		for _, betData in pairs(winningBets) do
+			local spectator = betData.Spectator
+			if spectator and spectator.Parent then
+				local share = betData.Amount / winnerPot
+				local profit = math.floor(loserPot * share)
+				local payout = betData.Amount + profit
+				spectator.leaderstats.Dews.Value += payout
+				Network.NotificationEvent:FireClient(spectator, "You won " .. payout .. " Dews! (Profit: +" .. profit .. ")", "Success")
+			end
+		end
+	else
+		-- [[ FIX: Draw Handling ]]
+		if p1 then Network.NotificationEvent:FireClient(p1, "Draw! No Elo lost.", "Info") end
+		if p2 then Network.NotificationEvent:FireClient(p2, "Draw! No Elo lost.", "Info") end
+
+		for _, betArray in pairs(match.Bets) do
+			for _, betData in pairs(betArray) do
+				local spectator = betData.Spectator
+				if spectator and spectator.Parent then
+					spectator.leaderstats.Dews.Value += betData.Amount
+					Network.NotificationEvent:FireClient(spectator, "Match Draw! Wager refunded.", "Info")
+				end
+			end
 		end
 	end
 
@@ -132,7 +155,6 @@ local function ResolveTurn(matchId)
 
 	local function ApplyPvPCCReduction(combatant)
 		if not combatant.Statuses then return end
-		-- Convert Hard CC (Turn Skips) into Soft CC (Stat Reductions)
 		if combatant.Statuses["Stun"] then
 			combatant.Statuses["Crippled"] = combatant.Statuses["Stun"]
 			combatant.Statuses["Stun"] = nil
@@ -164,7 +186,7 @@ local function ResolveTurn(matchId)
 		if attacker.HP <= 0 or defender.HP <= 0 then return end
 		local targetLimb = attacker.TargetLimb or "Body"
 
-		ApplyPvPCCReduction(attacker) -- Prevent turn skipping in PvP
+		ApplyPvPCCReduction(attacker)
 
 		local skill = SkillData.Skills[skillName]
 		if skill then
@@ -179,7 +201,7 @@ local function ResolveTurn(matchId)
 			LogMsg = logMsg, DidHit = didHit, ShakeType = shakeType, SkillUsed = skillName, Attacker = attacker.Name,
 			P1_HP = match.P1.HP, P2_HP = match.P2.HP, P1_Max = match.P1.MaxHP, P2_Max = match.P2.MaxHP,
 			P1_Gas = match.P1.Gas, P2_Gas = match.P2.Gas, P1_MaxGas = match.P1.MaxGas, P2_MaxGas = match.P2.MaxGas,
-			P1_Statuses = match.P1.Statuses, P2_Statuses = match.P2.Statuses -- SEND STATUSES TO CLIENT
+			P1_Statuses = match.P1.Statuses, P2_Statuses = match.P2.Statuses 
 		})
 		task.wait(turnDelay)
 	end
@@ -190,7 +212,11 @@ local function ResolveTurn(matchId)
 	TickStatuses(match.P1)
 	TickStatuses(match.P2)
 
-	if match.P1.HP <= 0 or match.P2.HP <= 0 then
+	-- [[ FIX: Mutual Death Bug Check ]]
+	if match.P1.HP <= 0 and match.P2.HP <= 0 then
+		EndMatch(matchId, "Draw")
+		return
+	elseif match.P1.HP <= 0 or match.P2.HP <= 0 then
 		local winner = match.P1.HP > 0 and match.P1 or match.P2
 		EndMatch(matchId, winner.PlayerObj.UserId)
 		return
@@ -272,12 +298,10 @@ PvPAction.OnServerEvent:Connect(function(player, actionType, matchId, data1, dat
 end)
 
 Players.PlayerRemoving:Connect(function(player)
-	-- Clean up queue
 	for i, qp in ipairs(PvPQueue) do
 		if qp == player then table.remove(PvPQueue, i); break end
 	end
 
-	-- Clean up active matches and award Elo to the remaining player
 	for matchId, match in pairs(ActiveMatches) do
 		if match.P1.PlayerObj == player then
 			match.P1.HP = 0
