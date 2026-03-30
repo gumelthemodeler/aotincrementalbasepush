@@ -98,16 +98,15 @@ local function ResolveRaidTurn(raidId)
 	raid.State = "Resolving"
 
 	local turnDelay = 1.5
-	-- [[ FIX: Provide the Combat Context so the engine doesn't break! ]]
-	local raidContext = { Range = "Close", IsRaid = true }
 
-	-- [[ PHASE 1: PLAYERS ATTACK ]]
 	for _, actor in ipairs(raid.Party) do
 		if actor.HP > 0 and raid.Boss.HP > 0 then
 			if actor.Statuses and (actor.Statuses["Blinded"] or actor.Statuses["TrueBlind"] or actor.Statuses["Stun"]) then
 				local logMsg = "<font color='#555555'>" .. actor.Name .. " is INCAPACITATED and lost their turn!</font>"
 				for _, p in ipairs(raid.Party) do
-					RaidUpdate:FireClient(p.PlayerObj, "TurnStrike", { LogMsg = logMsg, ShakeType = "None", BossData = raid.Boss, PartyData = raid.Party })
+					if p.PlayerObj and p.PlayerObj.Parent then
+						RaidUpdate:FireClient(p.PlayerObj, "TurnStrike", { LogMsg = logMsg, ShakeType = "None", BossData = raid.Boss, PartyData = raid.Party, Range = raid.Range })
+					end
 				end
 				task.wait(turnDelay)
 				continue
@@ -118,23 +117,71 @@ local function ResolveRaidTurn(raidId)
 				if skill.GasCost then actor.Gas = math.max(0, actor.Gas - skill.GasCost) end
 				if skill.EnergyCost then actor.TitanEnergy = math.max(0, actor.TitanEnergy - skill.EnergyCost) end
 				if skill.Effect == "Rest" or actor.Move == "Recover" then actor.Gas = math.min(actor.MaxGas, actor.Gas + (actor.MaxGas * 0.40)) end
+
+				if skill.Effect == "Flee" or actor.Move == "Retreat" then
+					actor.HP = 0 
+					local logMsg = "<font color='#AAAAAA'>" .. actor.Name .. " fired a smoke signal and retreated from the Raid!</font>"
+					for _, p in ipairs(raid.Party) do
+						if p.PlayerObj and p.PlayerObj.Parent then
+							RaidUpdate:FireClient(p.PlayerObj, "TurnStrike", { LogMsg = logMsg, ShakeType = "None", BossData = raid.Boss, PartyData = raid.Party, Range = raid.Range })
+						end
+					end
+					task.wait(turnDelay)
+					continue
+				end
+
+				if actor.Move == "Fall Back" then
+					raid.Range = "Long"
+					local logMsg = "<font color='#55FFFF'>" .. actor.Name .. " fell back! The party is now at LONG RANGE!</font>"
+					for _, p in ipairs(raid.Party) do
+						if p.PlayerObj and p.PlayerObj.Parent then
+							RaidUpdate:FireClient(p.PlayerObj, "TurnStrike", { LogMsg = logMsg, ShakeType = "None", BossData = raid.Boss, PartyData = raid.Party, Range = raid.Range })
+						end
+					end
+					task.wait(turnDelay)
+					continue
+				end
+
+				if actor.Move == "Close In" then
+					raid.Range = "Close"
+					local logMsg = "<font color='#55FF55'>" .. actor.Name .. " fired ODM gear! The party closed the gap to MELEE RANGE!</font>"
+					for _, p in ipairs(raid.Party) do
+						if p.PlayerObj and p.PlayerObj.Parent then
+							RaidUpdate:FireClient(p.PlayerObj, "TurnStrike", { LogMsg = logMsg, ShakeType = "None", BossData = raid.Boss, PartyData = raid.Party, Range = raid.Range })
+						end
+					end
+					task.wait(turnDelay)
+					continue
+				end
+
+				local sRange = skill.Range or "Close"
+				if sRange ~= "Any" and sRange ~= raid.Range then
+					local logMsg = "<font color='#AAAAAA'>" .. actor.Name .. " used " .. actor.Move:upper() .. ", but the boss is at " .. string.upper(raid.Range) .. " RANGE! The attack missed completely!</font>"
+					for _, p in ipairs(raid.Party) do
+						if p.PlayerObj and p.PlayerObj.Parent then
+							RaidUpdate:FireClient(p.PlayerObj, "TurnStrike", { LogMsg = logMsg, ShakeType = "None", BossData = raid.Boss, PartyData = raid.Party, Range = raid.Range })
+						end
+					end
+					task.wait(turnDelay)
+					continue
+				end
 			end
 
 			local startingBossHP = raid.Boss.HP
-			-- [[ FIX: Passed raidContext into ExecuteStrike ]]
-			local logMsg, didHit, shakeType = CombatCore.ExecuteStrike(actor, raid.Boss, actor.Move, actor.TargetLimb, actor.Name, raid.Boss.Name, "#55FFFF", "#FF5555", raidContext)
+			local logMsg, didHit, shakeType = CombatCore.ExecuteStrike(actor, raid.Boss, actor.Move, actor.TargetLimb, actor.Name, raid.Boss.Name, "#55FFFF", "#FF5555")
 
 			local damageDealt = startingBossHP - raid.Boss.HP
 			if damageDealt > 0 then actor.Aggro += damageDealt end
 
 			for _, p in ipairs(raid.Party) do
-				RaidUpdate:FireClient(p.PlayerObj, "TurnStrike", { LogMsg = logMsg, ShakeType = shakeType, BossData = raid.Boss, SkillUsed = actor.Move, Attacker = actor.Name, PartyData = raid.Party })
+				if p.PlayerObj and p.PlayerObj.Parent then
+					RaidUpdate:FireClient(p.PlayerObj, "TurnStrike", { LogMsg = logMsg, ShakeType = shakeType, BossData = raid.Boss, SkillUsed = actor.Move, Attacker = actor.Name, PartyData = raid.Party, Range = raid.Range })
+				end
 			end
 			task.wait(turnDelay)
 		end
 	end
 
-	-- [[ PHASE 2: BOSS RETALIATES ]]
 	local target = nil
 	for _, p in ipairs(raid.Party) do
 		if p.HP > 0 then
@@ -158,23 +205,43 @@ local function ResolveRaidTurn(raidId)
 
 			for _, p in ipairs(raid.Party) do
 				if p.HP > 0 then
-					local dmg = math.floor(p.MaxHP * aoePct)
-					p.HP = math.max(0, p.HP - dmg)
-					logMsg = logMsg .. "- " .. p.Name .. " takes " .. dmg .. " damage!\n"
+					if p.Statuses and (tonumber(p.Statuses["Dodge"]) or 0) > 0 then
+						logMsg = logMsg .. "- " .. p.Name .. " maneuvered out of the way!\n"
+					else
+						local dmg = math.floor(p.MaxHP * aoePct)
+						p.HP = math.max(0, p.HP - dmg)
+						logMsg = logMsg .. "- " .. p.Name .. " takes " .. dmg .. " damage!\n"
+					end
 				end
 			end
 
 			for _, p in ipairs(raid.Party) do
-				RaidUpdate:FireClient(p.PlayerObj, "TurnStrike", { LogMsg = logMsg, ShakeType = "Heavy", BossData = raid.Boss, SkillUsed = chosenSkill, Attacker = raid.Boss.Name, PartyData = raid.Party })
+				if p.PlayerObj and p.PlayerObj.Parent then
+					RaidUpdate:FireClient(p.PlayerObj, "TurnStrike", { LogMsg = logMsg, ShakeType = "Heavy", BossData = raid.Boss, SkillUsed = chosenSkill, Attacker = raid.Boss.Name, PartyData = raid.Party, Range = raid.Range })
+				end
 			end
 			task.wait(turnDelay + 1)
 		else
-			-- [[ FIX: Passed raidContext into ExecuteStrike ]]
-			local logMsg, didHit, shakeType = CombatCore.ExecuteStrike(raid.Boss, target, chosenSkill, "Body", raid.Boss.Name, target.Name, "#FF5555", "#FFFFFF", raidContext)
-			for _, p in ipairs(raid.Party) do
-				RaidUpdate:FireClient(p.PlayerObj, "TurnStrike", { LogMsg = logMsg, ShakeType = shakeType, BossData = raid.Boss, SkillUsed = chosenSkill, Attacker = raid.Boss.Name, PartyData = raid.Party })
+			local sData = SkillData.Skills[chosenSkill]
+			local sRange = sData and sData.Range or "Close"
+
+			if raid.Range == "Long" and sRange == "Close" then
+				local logMsg = "<font color='#AAAAAA'>" .. raid.Boss.Name .. " used " .. chosenSkill:upper() .. ", but the party is at LONG RANGE! The attack missed completely!</font>"
+				for _, p in ipairs(raid.Party) do
+					if p.PlayerObj and p.PlayerObj.Parent then
+						RaidUpdate:FireClient(p.PlayerObj, "TurnStrike", { LogMsg = logMsg, ShakeType = "None", BossData = raid.Boss, PartyData = raid.Party, Range = raid.Range })
+					end
+				end
+				task.wait(turnDelay)
+			else
+				local logMsg, didHit, shakeType = CombatCore.ExecuteStrike(raid.Boss, target, chosenSkill, "Body", raid.Boss.Name, target.Name, "#FF5555", "#FFFFFF")
+				for _, p in ipairs(raid.Party) do
+					if p.PlayerObj and p.PlayerObj.Parent then
+						RaidUpdate:FireClient(p.PlayerObj, "TurnStrike", { LogMsg = logMsg, ShakeType = shakeType, BossData = raid.Boss, SkillUsed = chosenSkill, Attacker = raid.Boss.Name, PartyData = raid.Party, Range = raid.Range })
+					end
+				end
+				task.wait(turnDelay)
 			end
-			task.wait(turnDelay)
 		end
 	end
 
@@ -201,6 +268,19 @@ local function ResolveRaidTurn(raidId)
 	for _, p in ipairs(raid.Party) do if p.HP > 0 then TickStatusesAndCooldowns(p) end end
 	TickStatusesAndCooldowns(raid.Boss)
 
+	if raid.Boss.GateType == "Steam" and raid.Boss.GateHP > 0 then
+		raid.Boss.GateHP = raid.Boss.GateHP - 1
+		if raid.Boss.GateHP <= 0 then
+			local logMsg = "<font color='#55FFFF'><b>The intense steam surrounding " .. raid.Boss.Name .. " has completely dissipated! The nape is exposed!</b></font>"
+			for _, p in ipairs(raid.Party) do
+				if p.PlayerObj and p.PlayerObj.Parent then
+					RaidUpdate:FireClient(p.PlayerObj, "TurnStrike", { LogMsg = logMsg, ShakeType = "None", BossData = raid.Boss, PartyData = raid.Party, Range = raid.Range })
+				end
+			end
+			task.wait(1.5)
+		end
+	end
+
 	if raid.Boss.HP <= 0 then EndRaid(raidId, true); return end
 
 	local aliveCount = 0
@@ -213,7 +293,9 @@ local function ResolveRaidTurn(raidId)
 	raid.State = "WaitingForMoves"
 
 	for _, p in ipairs(raid.Party) do
-		RaidUpdate:FireClient(p.PlayerObj, "NextTurnStarted", { EndTime = raid.TurnEndTime, BossData = raid.Boss, PartyData = raid.Party })
+		if p.PlayerObj and p.PlayerObj.Parent then
+			RaidUpdate:FireClient(p.PlayerObj, "NextTurnStarted", { EndTime = raid.TurnEndTime, BossData = raid.Boss, PartyData = raid.Party, Range = raid.Range })
+		end
 	end
 end
 
@@ -248,9 +330,11 @@ RaidAction.OnServerEvent:Connect(function(player, action, data)
 		local scale = 1 + ((memberCount - 1) * 0.3)
 		local bMaxHP = math.floor(bossData.Health * scale)
 
-		-- [[ FIX: Correctly import GateHP (Shields) so Armored Titan takes damage! ]]
+		local ctxRange = "Close"
+		if bossData.Name:find("Beast Titan") then ctxRange = "Long" end
+
 		ActiveRaids[raidId] = {
-			BossId = data.RaidId, Turn = 1, State = "WaitingForMoves", TurnEndTime = os.time() + TURN_DURATION, Party = {},
+			BossId = data.RaidId, Turn = 1, State = "WaitingForMoves", TurnEndTime = os.time() + TURN_DURATION, Party = {}, Range = ctxRange,
 			Boss = { 
 				IsPlayer = false, Name = bossData.Name, HP = bMaxHP, MaxHP = bMaxHP, 
 				GateHP = bossData.GateHP, MaxGateHP = bossData.GateHP, GateType = bossData.GateType,
@@ -260,7 +344,7 @@ RaidAction.OnServerEvent:Connect(function(player, action, data)
 		}
 
 		for _, member in ipairs(partyData.Members) do table.insert(ActiveRaids[raidId].Party, CreateCombatant(member)) end
-		for _, member in ipairs(partyData.Members) do RaidUpdate:FireClient(member, "RaidStarted", { RaidId = raidId, BossData = ActiveRaids[raidId].Boss, PartyData = ActiveRaids[raidId].Party, EndTime = ActiveRaids[raidId].TurnEndTime }) end
+		for _, member in ipairs(partyData.Members) do RaidUpdate:FireClient(member, "RaidStarted", { RaidId = raidId, BossData = ActiveRaids[raidId].Boss, PartyData = ActiveRaids[raidId].Party, EndTime = ActiveRaids[raidId].TurnEndTime, Range = ctxRange }) end
 
 	elseif action == "SubmitMove" then
 		local raidId = data.RaidId
@@ -274,5 +358,15 @@ RaidAction.OnServerEvent:Connect(function(player, action, data)
 		end
 
 		if allReady then ResolveRaidTurn(raidId) end
+	end
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+	for raidId, raid in pairs(ActiveRaids) do
+		for _, p in ipairs(raid.Party) do
+			if p.UserId == player.UserId then
+				p.HP = 0 
+			end
+		end
 	end
 end)
