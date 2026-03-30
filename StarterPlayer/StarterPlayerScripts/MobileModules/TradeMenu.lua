@@ -43,6 +43,28 @@ local function ApplyButtonGradient(btn, topColor, botColor, strokeColor)
 	end
 end
 
+-- Helper to draw an item box
+local function DrawOfferItems(parentFrame, offerItems, canRemove)
+	for _, child in ipairs(parentFrame:GetChildren()) do
+		if child:IsA("TextButton") then child:Destroy() end
+	end
+	for itemName, amount in pairs(offerItems) do
+		local itemBtn = Instance.new("TextButton", parentFrame)
+		itemBtn.Size = UDim2.new(0, 60, 0, 60)
+		itemBtn.Text = itemName .. "\nx" .. amount
+		itemBtn.TextScaled = true
+		itemBtn.Font = Enum.Font.GothamBold
+		itemBtn.TextColor3 = Color3.fromRGB(255,255,255)
+		ApplyButtonGradient(itemBtn, Color3.fromRGB(40,40,50), Color3.fromRGB(20,20,30), Color3.fromRGB(100,100,120))
+
+		if canRemove then
+			itemBtn.MouseButton1Click:Connect(function()
+				Network.TradeAction:FireServer("RemoveItem", itemName)
+			end)
+		end
+	end
+end
+
 function TradeMenu.Init(parentFrame, tooltipMgr)
 	MainFrame = Instance.new("Frame", parentFrame)
 	MainFrame.Name = "TradeMenuFrame"; MainFrame.Size = UDim2.new(1, 0, 1, 0); MainFrame.BackgroundTransparency = 1; MainFrame.Visible = false
@@ -94,6 +116,7 @@ function TradeMenu.Init(parentFrame, tooltipMgr)
 
 	Network.TradeUpdate.OnClientEvent:Connect(function(action, data)
 		local AOT_UI = playerGui:WaitForChild("AOT_Interface")
+
 		if action == "Open" then
 			if AOT_UI:FindFirstChild("TradeOverlay") then AOT_UI.TradeOverlay:Destroy() end
 
@@ -101,6 +124,7 @@ function TradeMenu.Init(parentFrame, tooltipMgr)
 			overlay.Name = "TradeOverlay"; overlay.Size = UDim2.new(1, 0, 1, 0); overlay.BackgroundColor3 = Color3.new(0,0,0); overlay.BackgroundTransparency = 0.6; overlay.Active = true
 
 			local mainPanel = Instance.new("Frame", overlay)
+			mainPanel.Name = "Frame"
 			mainPanel.Size = UDim2.new(0.95, 0, 0.95, 0); mainPanel.Position = UDim2.new(0.5, 0, 0.5, 0); mainPanel.AnchorPoint = Vector2.new(0.5, 0.5); mainPanel.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
 			Instance.new("UICorner", mainPanel).CornerRadius = UDim.new(0, 8); Instance.new("UIStroke", mainPanel).Color = Color3.fromRGB(80, 140, 220); mainPanel.UIStroke.Thickness = 2
 
@@ -111,18 +135,41 @@ function TradeMenu.Init(parentFrame, tooltipMgr)
 			local sep = Instance.new("Frame", mainPanel)
 			sep.Size = UDim2.new(0.9, 0, 0, 1); sep.Position = UDim2.new(0.05, 0, 0, 40); sep.BackgroundColor3 = Color3.fromRGB(80, 140, 220); sep.BackgroundTransparency = 0.5; sep.BorderSizePixel = 0
 
+			-- [[ Setup Offer Grids ]]
 			local tradeContentArea = Instance.new("Frame", mainPanel)
 			tradeContentArea.Name = "TradeContentArea"
 			tradeContentArea.Size = UDim2.new(1, -20, 1, -110); tradeContentArea.Position = UDim2.new(0, 10, 0, 50); tradeContentArea.BackgroundTransparency = 1
 
+			local myOfferFrame = Instance.new("ScrollingFrame", tradeContentArea)
+			myOfferFrame.Name = "MyOffer"
+			myOfferFrame.Size = UDim2.new(0.48, 0, 0.8, 0); myOfferFrame.Position = UDim2.new(0,0,0,0)
+			myOfferFrame.BackgroundTransparency = 1; myOfferFrame.ScrollBarThickness = 0
+			local mg = Instance.new("UIGridLayout", myOfferFrame); mg.CellSize = UDim2.new(0, 60, 0, 60)
+
+			local theirOfferFrame = Instance.new("ScrollingFrame", tradeContentArea)
+			theirOfferFrame.Name = "TheirOffer"
+			theirOfferFrame.Size = UDim2.new(0.48, 0, 0.8, 0); theirOfferFrame.Position = UDim2.new(0.52,0,0,0)
+			theirOfferFrame.BackgroundTransparency = 1; theirOfferFrame.ScrollBarThickness = 0
+			local tg = Instance.new("UIGridLayout", theirOfferFrame); tg.CellSize = UDim2.new(0, 60, 0, 60)
+
+			-- Provide a text box to prompt adding items for testing
+			local addPrompt = Instance.new("TextBox", tradeContentArea)
+			addPrompt.Name = "AddItemPrompt"
+			addPrompt.Size = UDim2.new(0.48, 0, 0, 30); addPrompt.Position = UDim2.new(0, 0, 0.85, 0)
+			addPrompt.PlaceholderText = "Type item name to add..."
+			addPrompt.FocusLost:Connect(function(enterPressed)
+				if enterPressed and addPrompt.Text ~= "" then
+					Network.TradeAction:FireServer("AddItem", addPrompt.Text)
+					addPrompt.Text = ""
+				end
+			end)
+
 			local confirmBtn = Instance.new("TextButton", mainPanel)
-			confirmBtn.Name = "ConfirmBtn"; confirmBtn.Size = UDim2.new(0.45, 0, 0, 40); confirmBtn.Position = UDim2.new(0.03, 0, 1, -50); confirmBtn.Font = Enum.Font.GothamBlack; confirmBtn.TextColor3 = Color3.fromRGB(150, 255, 150); confirmBtn.TextSize = 12; confirmBtn.Text = "CONFIRM TRADE"
+			confirmBtn.Name = "ConfirmBtn"; confirmBtn.Size = UDim2.new(0.45, 0, 0, 40); confirmBtn.Position = UDim2.new(0.03, 0, 1, -50); confirmBtn.Font = Enum.Font.GothamBlack; confirmBtn.TextColor3 = Color3.fromRGB(150, 255, 150); confirmBtn.TextSize = 12; confirmBtn.Text = "LOCK IN OFFER"
 			ApplyButtonGradient(confirmBtn, Color3.fromRGB(20, 35, 20), Color3.fromRGB(10, 20, 10), Color3.fromRGB(80, 180, 80))
 
 			confirmBtn.MouseButton1Click:Connect(function() 
-				if confirmBtn.Text == "CONFIRM TRADE" or confirmBtn.Text == "PARTNER CONFIRMED!" then 
-					Network.TradeAction:FireServer("ToggleConfirm") 
-				end 
+				Network.TradeAction:FireServer("ToggleConfirm") 
 			end)
 
 			local cancelBtn = Instance.new("TextButton", mainPanel)
@@ -131,7 +178,46 @@ function TradeMenu.Init(parentFrame, tooltipMgr)
 
 			cancelBtn.MouseButton1Click:Connect(function() Network.TradeAction:FireServer("Cancel") end)
 
-		elseif action == "Close" then
+			-- [[ Sync Updates ]]
+		elseif action == "Sync" then
+			local overlay = AOT_UI:FindFirstChild("TradeOverlay")
+			if not overlay then return end
+
+			local isP1 = (data.P1 == player)
+			local myOffer = isP1 and data.P1Offer or data.P2Offer
+			local theirOffer = isP1 and data.P2Offer or data.P1Offer
+			local amReady = isP1 and data.P1Confirmed or data.P2Confirmed
+			local theyReady = isP1 and data.P2Confirmed or data.P1Confirmed
+
+			local mainPanel = overlay:FindFirstChild("Frame")
+			local confirmBtn = mainPanel and mainPanel:FindFirstChild("ConfirmBtn")
+			local contentArea = mainPanel and mainPanel:FindFirstChild("TradeContentArea")
+
+			if confirmBtn then
+				if not amReady then
+					confirmBtn.Text = "LOCK IN OFFER"
+					ApplyButtonGradient(confirmBtn, Color3.fromRGB(80, 80, 180), Color3.fromRGB(40, 40, 100))
+				elseif amReady and not theyReady then
+					confirmBtn.Text = "WAITING ON PARTNER..."
+					ApplyButtonGradient(confirmBtn, Color3.fromRGB(180, 180, 80), Color3.fromRGB(100, 100, 40))
+				elseif amReady and theyReady then
+					confirmBtn.Text = "READY TO TRADE"
+					ApplyButtonGradient(confirmBtn, Color3.fromRGB(80, 180, 80), Color3.fromRGB(40, 100, 40))
+				end
+
+				if data.Countdown > 0 then
+					confirmBtn.Text = "TRADING IN " .. data.Countdown .. "..."
+				end
+			end
+
+			if contentArea then
+				local myFr = contentArea:FindFirstChild("MyOffer")
+				local theirFr = contentArea:FindFirstChild("TheirOffer")
+				if myFr then DrawOfferItems(myFr, myOffer.Items, true) end
+				if theirFr then DrawOfferItems(theirFr, theirOffer.Items, false) end
+			end
+
+		elseif action == "TradeComplete" or action == "TradeCancelled" then
 			if AOT_UI:FindFirstChild("TradeOverlay") then AOT_UI.TradeOverlay:Destroy() end
 		end
 	end)
