@@ -231,14 +231,13 @@ local function BuildNavigation()
 		catBtn.MouseButton1Click:Connect(CategoryCallbacks[catName])
 	end
 
-	if (player.UserId == 4068160397 or player.Name == "girthbender1209") then
-		local adminBtn = Instance.new("TextButton", NavBar)
-		adminBtn.Name = "AdminBtn"; adminBtn.Size = isMobile and UDim2.new(0, 90, 1, -15) or UDim2.new(1, -15, 0, 45)
-		adminBtn.Font = Enum.Font.GothamBlack; adminBtn.TextColor3 = Color3.fromRGB(255, 100, 100); adminBtn.TextScaled = true; adminBtn.Text = "ADMIN"; Instance.new("UITextSizeConstraint", adminBtn).MaxTextSize = 12
-		ApplyButtonGradient(adminBtn, Color3.fromRGB(80, 30, 30), Color3.fromRGB(40, 15, 15), Color3.fromRGB(150, 50, 50))
-		table.insert(SubButtons, adminBtn)
-		adminBtn.MouseButton1Click:Connect(function() SwitchTab("Admin") end)
-	end
+	-- Removed the 'if' restriction to allow all players to see the Tester button
+	local adminBtn = Instance.new("TextButton", NavBar)
+	adminBtn.Name = "AdminBtn"; adminBtn.Size = isMobile and UDim2.new(0, 90, 1, -15) or UDim2.new(1, -15, 0, 45)
+	adminBtn.Font = Enum.Font.GothamBlack; adminBtn.TextColor3 = Color3.fromRGB(255, 100, 100); adminBtn.TextScaled = true; adminBtn.Text = "TESTER"; Instance.new("UITextSizeConstraint", adminBtn).MaxTextSize = 12
+	ApplyButtonGradient(adminBtn, Color3.fromRGB(80, 30, 30), Color3.fromRGB(40, 15, 15), Color3.fromRGB(150, 50, 50))
+	table.insert(SubButtons, adminBtn)
+	adminBtn.MouseButton1Click:Connect(function() SwitchTab("Admin") end)
 end
 
 BuildNavigation()
@@ -304,9 +303,8 @@ task.spawn(function()
 		TabModules["RaidCombat"].Init(ContentFrame, TooltipManager)
 
 		pcall(function()
-			if (player.UserId == 4068160397 or player.Name == "girthbender1209") then
-				TabModules["Admin"] = require(rootModules:WaitForChild("AdminTab")); TabModules["Admin"].Init(ContentFrame)
-			end
+			-- Removed whitelist check so the module initializes for everyone
+			TabModules["Admin"] = require(rootModules:WaitForChild("AdminTab")); TabModules["Admin"].Init(ContentFrame)
 		end)
 
 		local WelcomeHub = require(uiModulesFolder:WaitForChild("WelcomeHub"))
