@@ -23,7 +23,6 @@ local Colors = {
 }
 
 function AdminTab.Init(parentFrame)
-	if player.UserId ~= 4068160397 and player.Name ~= "girthbender1209" then return end
 
 	MainFrame = Instance.new("Frame", parentFrame)
 	MainFrame.Name = "AdminFrame"; MainFrame.Size = UDim2.new(1, 0, 1, 0); MainFrame.BackgroundTransparency = 1; MainFrame.Visible = false
