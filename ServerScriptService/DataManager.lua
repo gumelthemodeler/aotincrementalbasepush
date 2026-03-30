@@ -195,8 +195,6 @@ pcall(function()
 end)
 
 RemotesFolder.AdminCommand.OnServerEvent:Connect(function(player, command, targetName, args)
-	if player.UserId ~= 4068160397 and player.Name ~= "girthbender1209" then player:Kick("Unauthorized Admin Access"); return end
-
 	if command == "GlobalRollback" then
 		pcall(function() MessagingService:PublishAsync("GlobalDataRollback", "Initiate") end)
 		RemotesFolder.NotificationEvent:FireClient(player, "GLOBAL ROLLBACK INITIATED ACROSS ALL SERVERS.", "Success")
