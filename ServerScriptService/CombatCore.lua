@@ -24,7 +24,6 @@ function CombatCore.CalculateDamage(attacker, defender, skillMult, targetLimb)
 	local isAttackerTransformed = attacker.Statuses and (tonumber(attacker.Statuses.Transformed) or 0) > 0
 	local isDefenderTransformed = defender.Statuses and (tonumber(defender.Statuses.Transformed) or 0) > 0
 
-	-- [[ REBALANCE: Reduced the scaling division to heavily nerf the Titan Multiplier ]]
 	if attacker.IsPlayer and isAttackerTransformed then
 		local titanPower = tonumber(attacker.PlayerObj:GetAttribute("Titan_Power_Val")) or 10
 		atkStrength = atkStrength * (1.0 + (titanPower / 35.0))
@@ -191,6 +190,7 @@ function CombatCore.ExecuteStrike(attacker, defender, skillName, targetLimb, log
 		isSequenceCombo = true; comboMult = tonumber(skill.ComboMult) or 1.5 
 	end
 
+	-- [[ FIX: Self-Buff Bypass! Prevents buffs from missing or giving the enemy the buff ]]
 	if skill.Effect == "Block" or skillName == "Maneuver" or skillName == "Evasive Maneuver" then
 		if not attacker.Statuses then attacker.Statuses = {} end
 		local blind = tonumber(attacker.Statuses.Blinded) or 0
@@ -201,20 +201,36 @@ function CombatCore.ExecuteStrike(attacker, defender, skillName, targetLimb, log
 		end
 		attacker.Statuses["Dodge"] = 1; attacker.LastSkill = skillName 
 		return fLogName .. " used <b>" .. skillName .. "</b>! " .. fLogName .. " maneuvers rapidly, dodging the next attack.", false, "None"
+
+	elseif skill.Effect == "NapeGuard" then
+		if not attacker.Statuses then attacker.Statuses = {} end
+		attacker.Statuses["NapeGuard"] = tonumber(skill.Duration) or 2
+		attacker.LastSkill = skillName
+		return fLogName .. " used <b>" .. skillName .. "</b>! <font color='#AA55FF'>[NAPE GUARDED]</font>", false, "None"
+
+	elseif string.find(tostring(skill.Effect), "Buff_") and (tonumber(skill.Mult) or 0) == 0 then
+		if not attacker.Statuses then attacker.Statuses = {} end
+		attacker.Statuses[skill.Effect] = tonumber(skill.Duration) or 2
+		attacker.LastSkill = skillName
+		return fLogName .. " used <b>" .. skillName .. "</b>! <font color='#AA55FF'>[" .. string.gsub(skill.Effect:upper(), "_", " ") .. " ACTIVATED]</font>", false, "None"
+
 	elseif skill.Effect == "Rest" or skillName == "Recover" or skillName == "Regroup" then
 		local healAmount = (tonumber(attacker.MaxHP) or 100) * 0.30
 		attacker.HP = math.min(tonumber(attacker.MaxHP) or 100, (tonumber(attacker.HP) or 0) + healAmount); attacker.LastSkill = skillName
 		local regroupWord = attacker.IsPlayer and "regroup" or "regroups"
 		return fLogName .. " used <b>" .. skillName .. "</b>! <font color='#55FF55'>" .. fLogName .. " " .. regroupWord .. ", recovering HP and Gas.</font>", false, "None"
+
 	elseif skill.Effect == "Transform" then
 		if not attacker.Statuses then attacker.Statuses = {} end
 		attacker.Statuses["Transformed"] = 999; attacker.LastSkill = skillName; attacker.HP = tonumber(attacker.MaxHP) or 100
 		attacker.TitanEnergy = tonumber(attacker.MaxTitanEnergy) or 100
 		return fLogName .. " used <b>" .. skillName .. "</b>! Lightning strikes as " .. fLogName .. " shifts into a Titan! <font color='#55FF55'>[HP & HEAT Restored]</font>", false, "Heavy"
+
 	elseif skill.Effect == "Eject" then
 		if attacker.Statuses then attacker.Statuses["Transformed"] = nil end
 		attacker.LastSkill = skillName
 		return fLogName .. " used <b>" .. skillName .. "</b>! " .. fLogName .. " cuts themselves out of the nape, returning to human form.", false, "None"
+
 	elseif skill.Effect == "TitanRest" or skillName == "Titan Recover" then
 		local healAmount = (tonumber(attacker.MaxHP) or 100) * 0.60
 		attacker.HP = math.min(tonumber(attacker.MaxHP) or 100, (tonumber(attacker.HP) or 0) + healAmount); attacker.LastSkill = skillName
@@ -349,9 +365,11 @@ function CombatCore.ExecuteStrike(attacker, defender, skillName, targetLimb, log
 						defender.Gas = math.max(0, (tonumber(defender.Gas) or 0) - 40)
 						effectLog = effectLog .. " <font color='#FF5555'>[-40 GAS]</font>"
 					end
-				elseif safeEffect == "NapeGuard" then
-					defender.Statuses["NapeGuard"] = tonumber(skill.Duration) or 2
-					effectLog = effectLog .. " <font color='#AA55FF'>[NAPE GUARDED]</font>"
+					-- [[ FIX: Added buff routing just in case an attack skill also buffs the attacker ]]
+				elseif string.find(safeEffect, "Buff_") then
+					if not attacker.Statuses then attacker.Statuses = {} end
+					attacker.Statuses[safeEffect] = tonumber(skill.Duration) or 2
+					effectLog = effectLog .. " <font color='#55FF55'>[" .. string.gsub(safeEffect:upper(), "_", " ") .. "]</font>"
 				else
 					defender.Statuses[safeEffect] = tonumber(skill.Duration) or 2
 					effectLog = effectLog .. " <font color='#AA55FF'>[" .. safeEffect:upper() .. "]</font>"
