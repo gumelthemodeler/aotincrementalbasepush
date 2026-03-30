@@ -21,6 +21,7 @@ local eAvatarBox, eAvatarIcon
 
 local LogText, ActionGrid, TargetMenu, LeaveBtn
 local currentRaidId = nil
+local currentRange = "Close" -- [[ FIX: Added Range Tracking ]]
 local inputLocked = false
 local pendingSkillName = nil
 local cachedTooltipMgr
@@ -233,7 +234,7 @@ function RaidTab.Init(parentFrame, tooltipMgr)
 	CreateLimb("Legs", UDim2.new(0.23, 0, 0.32, 0), UDim2.new(0.63, 0, 0.81, 0), "Deals 50% Damage. Inflicts Crippled.", Color3.fromRGB(80, 140, 180))
 	for _, child in ipairs(BodyContainer:GetChildren()) do if child:IsA("TextButton") then child.AnchorPoint = Vector2.new(0.5, 0.5) end end
 
-	LeaveBtn = Instance.new("TextButton", ArenaFrame); LeaveBtn.Size = UDim2.new(0.8, 0, 0, 45); LeaveBtn.LayoutOrder = 5; LeaveBtn.Font = Enum.Font.GothamBlack; LeaveBtn.TextColor3 = Color3.fromRGB(255, 255, 255); LeaveBtn.TextSize = 14; LeaveBtn.Text = "LEAVE ARENA"; LeaveBtn.Visible = false
+	LeaveBtn = Instance.new("TextButton", ArenaFrame); LeaveBtn.Size = UDim2.new(0.6, 0, 0, 45); LeaveBtn.LayoutOrder = 5; LeaveBtn.Font = Enum.Font.GothamBlack; LeaveBtn.TextColor3 = Color3.fromRGB(255, 255, 255); LeaveBtn.TextSize = 16; LeaveBtn.Text = "LEAVE ARENA"; LeaveBtn.Visible = false
 	ApplyButtonGradient(LeaveBtn, Color3.fromRGB(80, 180, 80), Color3.fromRGB(40, 100, 40), Color3.fromRGB(20, 80, 20))
 
 	LeaveBtn.MouseButton1Click:Connect(function()
@@ -250,10 +251,7 @@ function RaidTab.Init(parentFrame, tooltipMgr)
 		for _, child in ipairs(PartyListFrame:GetChildren()) do if child:IsA("Frame") then child:Destroy() end end
 		PartyUIBars = {}
 
-		-- Safely grab the correct party payload data
 		local pData = partyData.PartyData or partyData.Party or partyData
-
-		-- [[ THE FIX: Dynamic Combatants Scaling! ]]
 		local pSize = #pData
 		local panelHeight = 70
 		local cHeight = math.max(85, (pSize * panelHeight) + ((pSize - 1) * 5))
@@ -307,7 +305,9 @@ function RaidTab.Init(parentFrame, tooltipMgr)
 
 	local function UpdateActionGrid(partyData)
 		inputLocked = false
-		for _, child in ipairs(ActionGrid:GetChildren()) do if child:IsA("TextButton") then child:Destroy() end end
+		for _, child in ipairs(ActionGrid:GetChildren()) do 
+			if child:IsA("TextButton") then child.Visible = false end 
+		end
 
 		local pData = partyData.PartyData or partyData.Party or partyData
 		local myData = nil
@@ -323,7 +323,7 @@ function RaidTab.Init(parentFrame, tooltipMgr)
 
 		local function CreateBtn(sName, color, order)
 			local sData = SkillData.Skills[sName]
-			if not sData or sName == "Retreat" then return end
+			if not sData then return end
 			if sName == "Transform" and (pClan == "Ackerman" or pClan == "Awakened Ackerman") then return end
 
 			local cd = myData.Cooldowns and myData.Cooldowns[sName] or 0
@@ -333,7 +333,40 @@ function RaidTab.Init(parentFrame, tooltipMgr)
 			local hasEnergy = (myData.TitanEnergy or 0) >= energyCost
 			local isReady = (cd == 0) and hasGas and hasEnergy
 
-			local btn = Instance.new("TextButton", ActionGrid); btn.RichText = true; btn.Font = Enum.Font.GothamBold; btn.TextSize = 11; btn.LayoutOrder = order or 10
+			local btn = ActionGrid:FindFirstChild("Btn_" .. sName)
+			if not btn then
+				btn = Instance.new("TextButton", ActionGrid)
+				btn.Name = "Btn_" .. sName
+				btn.RichText = true; btn.Font = Enum.Font.GothamBold; btn.TextSize = 11
+
+				btn.MouseButton1Click:Connect(function()
+					local currentMyData
+					for _, p in ipairs(pData) do if p.UserId == player.UserId then currentMyData = p; break end end
+					local c_cd = currentMyData and currentMyData.Cooldowns and currentMyData.Cooldowns[sName] or 0
+					local c_ready = (c_cd == 0) and ((currentMyData and currentMyData.Gas or 0) >= gasCost)
+
+					if not inputLocked and c_ready then
+						EffectsManager.PlaySFX("Click")
+						-- [[ FIX: Directly submit Retreat/FallBack/CloseIn instead of opening target menu ]]
+						if sName == "Retreat" or sName == "Fall Back" or sName == "Close In" or sData.Effect == "Rest" or sData.Effect == "TitanRest" or sData.Effect == "Eject" or sData.Effect == "Transform" or sData.Effect == "Block" then
+							if cachedTooltipMgr then cachedTooltipMgr.Hide() end
+							LockGridAndWait()
+							Network.RaidAction:FireServer("SubmitMove", { RaidId = currentRaidId, Move = sName, Limb = "Body" })
+						else
+							if cachedTooltipMgr then cachedTooltipMgr.Hide() end
+							pendingSkillName = sName
+							ActionGrid.Visible = false
+							TargetMenu.Visible = true
+						end
+					end
+				end)
+
+				btn.MouseEnter:Connect(function() if cachedTooltipMgr then cachedTooltipMgr.Show(sData.Description or sName) end end)
+				btn.MouseLeave:Connect(function() if cachedTooltipMgr then cachedTooltipMgr.Hide() end end)
+			end
+
+			btn.Visible = true
+			btn.LayoutOrder = order or 10
 
 			if isReady then
 				ApplyButtonGradient(btn, color, Color3.new(color.R*0.7, color.G*0.7, color.B*0.7), color); btn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -345,17 +378,6 @@ function RaidTab.Init(parentFrame, tooltipMgr)
 			if cd == 0 then if not hasGas then cdStr = "NO GAS" elseif not hasEnergy then cdStr = "NO HEAT" end end
 
 			btn.Text = sName:upper() .. "\n<font size='9' color='" .. (isReady and "#CCCCCC" or "#FF5555") .. "'>[" .. cdStr .. "]</font>"
-
-			btn.MouseButton1Click:Connect(function()
-				if not inputLocked and isReady then
-					EffectsManager.PlaySFX("Click")
-					if sData.Effect == "Rest" or sData.Effect == "TitanRest" or sData.Effect == "Eject" or sData.Effect == "Transform" or sData.Effect == "Block" then
-						LockGridAndWait(); Network.RaidAction:FireServer("SubmitMove", { RaidId = currentRaidId, Move = sName, Limb = "Body" })
-					else
-						pendingSkillName = sName; ActionGrid.Visible = false; TargetMenu.Visible = true
-					end
-				end
-			end)
 		end
 
 		if isTransformed then
@@ -369,11 +391,28 @@ function RaidTab.Init(parentFrame, tooltipMgr)
 				end
 			end
 		else
-			CreateBtn("Basic Slash", Color3.fromRGB(120, 40, 40), 1); CreateBtn("Maneuver", Color3.fromRGB(40, 80, 140), 2); CreateBtn("Recover", Color3.fromRGB(40, 140, 80), 3)
-			if pTitan ~= "None" and pClan ~= "Ackerman" and pClan ~= "Awakened Ackerman" then CreateBtn("Transform", Color3.fromRGB(200, 150, 50), 5) end
-			local orderIndex = 6
+			CreateBtn("Basic Slash", Color3.fromRGB(120, 40, 40), 1)
+			CreateBtn("Maneuver", Color3.fromRGB(40, 80, 140), 2)
+
+			-- [[ FIX: Dynamic Range buttons based on the Current Range! ]]
+			if currentRange == "Long" then
+				CreateBtn("Close In", Color3.fromRGB(80, 140, 100), 3)
+			else
+				CreateBtn("Fall Back", Color3.fromRGB(80, 100, 140), 3)
+			end
+
+			CreateBtn("Recover", Color3.fromRGB(40, 140, 80), 4)
+
+			-- [[ FIX: Added the Retreat Button ]]
+			CreateBtn("Retreat", Color3.fromRGB(60, 60, 70), 5)
+
+			if pTitan ~= "None" and pClan ~= "Ackerman" and pClan ~= "Awakened Ackerman" then CreateBtn("Transform", Color3.fromRGB(200, 150, 50), 6) end
+
+			local orderIndex = 7
 			for sName, sData in pairs(SkillData.Skills) do
-				if sName == "Basic Slash" or sName == "Maneuver" or sName == "Recover" or sName == "Transform" then continue end
+				-- Exclude manually added buttons to prevent duplicates
+				if sName == "Basic Slash" or sName == "Maneuver" or sName == "Recover" or sName == "Transform" or sName == "Close In" or sName == "Fall Back" or sName == "Retreat" then continue end
+
 				local req = sData.Requirement
 				if req == pStyle or req == pClan or (req == "Ackerman" and pClan == "Awakened Ackerman") or (req == "ODM" and isODM) then
 					CreateBtn(sName, Color3.fromRGB(45, 40, 60), sData.Order or orderIndex); orderIndex += 1
@@ -403,8 +442,13 @@ function RaidTab.Init(parentFrame, tooltipMgr)
 	end
 
 	Network:WaitForChild("RaidUpdate").OnClientEvent:Connect(function(action, data)
+		local safeParty = data and (data.PartyData or data.Party)
+		local safeBoss = data and (data.BossData or data.Boss)
+
 		if action == "RaidStarted" then
 			currentRaidId = data.RaidId; logMessages = {}
+			currentRange = data.Range or "Close" -- [[ FIX: Initial Range Setup ]]
+
 			local topGui = parentFrame:FindFirstAncestorOfClass("ScreenGui")
 			if topGui then
 				if topGui:FindFirstChild("TopBar") then topGui.TopBar.Visible = false end
@@ -414,17 +458,15 @@ function RaidTab.Init(parentFrame, tooltipMgr)
 			parentFrame.Visible = false; ArenaFrame.Visible = true; LeaveBtn.Visible = false; TargetMenu.Visible = false; ActionGrid.Visible = true
 			AddLogMessage("<font color='#FFD700'><b>RAID COMMENCES! STAY ALIVE!</b></font>", false)
 
-			local pData = data.PartyData or data.Party
-			local bData = data.BossData or data.Boss
-
-			BuildParty(pData)
-			SyncParty(pData)
-			SyncBoss(bData)
-			UpdateActionGrid(pData)
+			BuildParty(safeParty)
+			SyncParty(safeParty)
+			SyncBoss(safeBoss)
+			UpdateActionGrid(safeParty)
 			StartVisualTimer(data.EndTime)
 
 		elseif action == "TurnStrike" then
 			ShakeUI(data.ShakeType); AddLogMessage(data.LogMsg, true)
+			if data.Range then currentRange = data.Range end -- [[ FIX: Update Range if it changes mid-turn ]]
 
 			if data.SkillUsed then 
 				local attackerIsLeft = false
@@ -434,27 +476,29 @@ function RaidTab.Init(parentFrame, tooltipMgr)
 				end
 			end
 
-			local pData = data.PartyData or data.Party
-			if pData then SyncParty(pData) end
-
-			local bData = data.BossData or data.Boss
-			if bData then SyncBoss(bData) end
+			if safeParty then SyncParty(safeParty) end
+			if safeBoss then SyncBoss(safeBoss) end
 
 		elseif action == "NextTurnStarted" then
 			StartVisualTimer(data.EndTime)
+			if data.Range then currentRange = data.Range end -- [[ FIX: Sync Range before drawing UI ]]
 
-			local pData = data.PartyData or data.Party
+			-- [[ THE CRITICAL BUG FIX: Actually call SyncBoss so the UI updates the Steam visually ]]
+			if safeBoss then SyncBoss(safeBoss) end
+
 			local myData = nil
-			for _, p in ipairs(pData) do 
-				if p.UserId == player.UserId then myData = p; break end 
+			if safeParty then
+				for _, p in ipairs(safeParty) do 
+					if p.UserId == player.UserId then myData = p; break end 
+				end
 			end
 
 			if myData and myData.HP <= 0 then 
 				inputLocked = true
-				for _, child in ipairs(ActionGrid:GetChildren()) do if child:IsA("TextButton") then child:Destroy() end end
+				for _, child in ipairs(ActionGrid:GetChildren()) do if child:IsA("TextButton") then child.Visible = false end end
 				AddLogMessage("<font color='#FF5555'>You have fallen in battle. Spectating party...</font>", true)
-			else
-				UpdateActionGrid(pData)
+			elseif safeParty then
+				UpdateActionGrid(safeParty)
 			end
 
 		elseif action == "RaidEnded" then
